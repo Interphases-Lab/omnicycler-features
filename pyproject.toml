@@ -1,0 +1,155 @@
+[project]
+name = "omnicycler-features"
+version = "0.1.0"
+description = "Standard SiLA 2 features, typed client and conformance kit for OmniCycler battery cycler servers."
+readme = "README.md"
+authors = [
+    { name = "Laswer5", email = "lukas.thoming@live.se" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aurora-unicycler~=0.5.0",
+    "unitelabs-cdk~=0.18.0",
+]
+
+[project.optional-dependencies]
+bdf = [
+    # batterydf 0.2.0 is not on PyPI yet; pinned to the GitHub main commit that reports 0.2.0. Switch to
+    # "batterydf~=0.2.0" once it is released. A direct reference keeps the pin in the published metadata.
+    "batterydf @ git+https://github.com/battery-data-alliance/battery-data-format@354d2e5695530c806bd02801c5c179ea39a4fa70",
+]
+testing = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "omnicycler.features"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.17.4",
+    "ty==0.0.98",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+timeout = 120
+testpaths = ["tests"]
+markers = ["hardware: needs a real device; excluded by default"]
+addopts = "-m 'not hardware'"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["*.md"]  # never reformat the code samples in documents
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # conflicts with the formatter
+    "CPY001",  # no per-file copyright headers
+    "D100",    # module docstrings only where they add something
+    "D104",    # package docstrings only where they add something
+    "D105",    # magic methods are self-explanatory
+    "D107",    # __init__ is documented on the class
+    "D203",    # google convention
+    "D212",    # multi-line summaries start on the second line, as in the CDK
+    "D213",    # one-line docstrings stay on one line
+    "ASYNC109", # client timeouts are seconds forwarded to the SiLA request (best-practices client rule 11)
+    "ICN001",  # plain `import datetime`
+    "TD",      # todos are tracked in issues
+    "TID252",  # relative imports within the package, as in the UniteLabs project structure
+]
+
+[tool.ruff.lint.per-file-ignores]
+# SiLA docstrings name parameters by their PascalCase identifier, which the CDK requires and ruff cannot match.
+"src/omnicycler/features/{channel_controller,cycler_information_provider,measurement_provider}/*.py" = ["D417"]
+"tests/**" = [
+    "D",        # test names are their documentation
+    "S101",     # asserts are the point of tests
+    "PLR2004",  # literal values in assertions are clear
+    "SLF001",   # tests may inspect private state
+    "ANN",      # fixtures and tests need no annotations beyond what helps
+    "TC",       # runtime imports in tests are fine
+    "ASYNC110", # tests poll simulated devices
+]
+"src/omnicycler/features/testing/**" = [
+    "S101",     # the conformance kit is a test suite
+    "PLR2004",
+    "D102",     # test methods are named for what they check
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.importlinter]
+root_packages = ["omnicycler.features"]
+
+[[tool.importlinter.contracts]]
+name = "The client only sees the wire"
+type = "forbidden"
+source_modules = ["omnicycler.features.client"]
+forbidden_modules = [
+    "omnicycler.features.backend",
+    "omnicycler.features.server",
+    "omnicycler.features.channel_controller",
+    "omnicycler.features.cycler_information_provider",
+    "omnicycler.features.measurement_provider",
+    "omnicycler.features.parameters",
+    "omnicycler.features.simulation",
+    "omnicycler.features.simulator",
+    "omnicycler.features.testing",
+    "omnicycler.features.bdf_export",
+    "omnicycler.features.bdf_metadata",
+]
+
+[[tool.importlinter.contracts]]
+name = "Below the features nothing knows about SiLA endpoints"
+type = "forbidden"
+source_modules = [
+    "omnicycler.features.backend",
+    "omnicycler.features.types",
+    "omnicycler.features.units",
+    "omnicycler.features.errors",
+    "omnicycler.features.protocol",
+    "omnicycler.features.bdf_export",
+    "omnicycler.features.bdf_metadata",
+    "omnicycler.features.simulation",
+]
+forbidden_modules = [
+    "omnicycler.features.server",
+    "omnicycler.features.channel_controller",
+    "omnicycler.features.cycler_information_provider",
+    "omnicycler.features.measurement_provider",
+    "omnicycler.features.parameters",
+    "omnicycler.features.client",
+    "omnicycler.features.simulator",
+    "omnicycler.features.testing",
+]
+
+[[tool.importlinter.contracts]]
+name = "Wire types are a pure description of the wire"
+type = "forbidden"
+source_modules = ["omnicycler.features.types", "omnicycler.features.units", "omnicycler.features.errors"]
+forbidden_modules = [
+    "omnicycler.features.backend",
+    "omnicycler.features.protocol",
+    "omnicycler.features.bdf_export",
+    "omnicycler.features.bdf_metadata",
+]
