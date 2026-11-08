@@ -1,8 +1,7 @@
 """
 Battery Data Format (BDF) export, shared by every OmniCycler server.
 
-Requires the `bdf` extra (`omnicycler-features[bdf]`), which installs
-batterydf 0.2 (BDF ontology 1.3) and polars. Brand backends report measured
+Built on batterydf 0.2 (BDF ontology 1.3) and polars. Brand backends report measured
 quantities only; every BDF column that follows from them is calculated here,
 once for every brand, by the ontology's own definitions, so the same run
 gives the same file whichever cycler produced it. Columns that are NaN
@@ -12,47 +11,14 @@ throughout are left out of the file.
 import dataclasses
 import pathlib
 import tempfile
-import typing
 import warnings
 
+import bdf
 import polars as pl
+from bdf import BDFValidationError, validate_df
 
+from .data_table import COLUMNS
 from .types import BdfExport, BdfFormat, DataPoint
-
-if typing.TYPE_CHECKING:
-    import bdf
-
-COLUMNS: dict[str, str] = {
-    "record_index": "Record Index / 1",
-    "test_time": "Test Time / s",
-    "unix_time": "Unix Time / s",
-    "voltage": "Voltage / V",
-    "current": "Current / A",
-    "cycle_count": "Cycle Count / 1",
-    "step_count": "Step Count / 1",
-    "protocol_step": "Step ID",
-    "charging_capacity": "Charging Capacity / Ah",
-    "discharging_capacity": "Discharging Capacity / Ah",
-    "charging_energy": "Charging Energy / Wh",
-    "discharging_energy": "Discharging Energy / Wh",
-    "ambient_temperature": "Ambient Temperature / degC",
-    "surface_temperature": "Surface Temperature / degC",
-    "temperature_t1": "Temperature T1 / degC",
-    "temperature_t2": "Temperature T2 / degC",
-    "temperature_t3": "Temperature T3 / degC",
-    "temperature_t4": "Temperature T4 / degC",
-    "temperature_t5": "Temperature T5 / degC",
-    "ambient_pressure": "Ambient Pressure / Pa",
-    "applied_pressure": "Applied Pressure / Pa",
-    "surface_pressure": "Surface Pressure / Pa",
-    "internal_resistance": "Internal Resistance / ohm",
-    "ac_internal_resistance": "AC Internal Resistance / ohm",
-    "dc_internal_resistance": "DC Internal Resistance / ohm",
-    "frequency": "Frequency / Hz",
-    "real_impedance": "Real Impedance / ohm",
-    "imaginary_impedance": "Imaginary Impedance / ohm",
-}
-"""The BDF column of every `DataPoint` field."""
 
 _PER_SEGMENT = {"Step": "Step Count / 1", "Cycle": "Cycle Count / 1"}
 _COUNTERS = {
@@ -147,8 +113,6 @@ def validate_frame(frame: pl.DataFrame) -> None:
       ValueError: If batterydf rejects the table, reports a column it does not
         know, or finds a derived column inconsistent with its definition.
     """
-    from bdf import BDFValidationError, validate_df  # noqa: PLC0415  # heavy import, only when exporting
-
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -165,7 +129,7 @@ def validate_frame(frame: pl.DataFrame) -> None:
         raise ValueError(msg)
 
 
-def encode_bdf(points: list[DataPoint], data_format: BdfFormat, metadata: "bdf.Metadata") -> BdfExport:
+def encode_bdf(points: list[DataPoint], data_format: BdfFormat, metadata: bdf.Metadata) -> BdfExport:
     """
     Encode the records of one run as a BDF file with its metadata sidecar.
 
@@ -183,8 +147,6 @@ def encode_bdf(points: list[DataPoint], data_format: BdfFormat, metadata: "bdf.M
     Raises:
       ValueError: If the resulting table is not valid BDF.
     """
-    import bdf  # noqa: PLC0415  # heavy import, only when exporting
-
     frame = to_frame(points)
     validate_frame(frame)
     with tempfile.TemporaryDirectory(prefix="omnicycler-bdf-") as directory:

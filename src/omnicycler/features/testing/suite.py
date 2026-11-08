@@ -12,6 +12,7 @@ import pytest
 
 from ..backend import ENDED_STATES
 from ..client import InvalidParameterError, OmniCyclerClient
+from ..data_table import COLUMNS, INTEGER_FIELDS, table_column
 from ..errors import ChannelBusyError, ChannelNotClearedError, NoActiveProtocolError, NoRunError
 from ..types import (
     BdfFormat,
@@ -313,6 +314,30 @@ class ConformanceSuite:
         ranged = await omnicycler_client.measurements.get_data_in_time_range(channel.channel, start, end)
         expected = [point.record_index for point in points if start <= point.test_time <= end]
         assert [point.record_index for point in ranged] == expected
+
+    async def test_data_table_matches_get_data(
+        self, omnicycler_client: OmniCyclerClient, omnicycler_short_protocol: bytes, omnicycler_run_timeout: float
+    ) -> None:
+        channel = await self._finished_channel(omnicycler_client, omnicycler_short_protocol, omnicycler_run_timeout)
+        points = await omnicycler_client.measurements.get_all_data(channel.channel)
+        table = await omnicycler_client.measurements.get_data_table(channel.channel, 0, len(points) + 10)
+
+        assert table.num_rows == len(points)
+        for field, label in COLUMNS.items():
+            expected = [float(getattr(point, field)) for point in points]
+            if all(math.isnan(value) for value in expected):
+                assert label not in table.column_names, label
+                continue
+            assert table_column(table, field) == pytest.approx(expected, nan_ok=True), label
+            if field in INTEGER_FIELDS:
+                assert str(table.schema.field(label).type) == "int64", label
+
+        middle = len(points) // 2
+        part = await omnicycler_client.measurements.get_data_table(
+            channel.channel, middle, 3, [COLUMNS["record_index"], COLUMNS["voltage"]]
+        )
+        assert part.column_names == [COLUMNS["record_index"], COLUMNS["voltage"]]
+        assert part.column(COLUMNS["record_index"]).to_pylist() == [middle, middle + 1, middle + 2]
 
     async def test_monitor_streams_every_record_once(
         self, omnicycler_client: OmniCyclerClient, omnicycler_short_protocol: bytes, omnicycler_run_timeout: float

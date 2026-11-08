@@ -1,7 +1,7 @@
 """
 BattINFO metadata for Battery Data Format exports, shared by every OmniCycler server.
 
-Requires the `bdf` extra. batterydf 0.2 keeps a table's metadata in a
+batterydf 0.2 keeps a table's metadata in a
 sidecar file beside it, as BattINFO records: the test, the cell, the cycler,
 its channel and the test protocol. This module fills those records from what
 a server knows about a run, the same way for every brand, so the sidecar of

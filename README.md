@@ -11,7 +11,7 @@ This package contains:
 | Typed async client | `omnicycler.features.client` | The OmniCycler orchestrator, scripts, notebooks |
 | Conformance kit | `omnicycler.features.testing` | Every brand repo's CI |
 | Reference simulator | `omnicycler.features.simulator` | Development without hardware |
-| BDF export and BattINFO metadata | `omnicycler.features.bdf_export`, `omnicycler.features.bdf_metadata` | Used by the backend; needs the `bdf` extra |
+| BDF export and BattINFO metadata | `omnicycler.features.bdf_export`, `omnicycler.features.bdf_metadata` | Used by the backend |
 
 Feature identifiers: `se.uu.interphaseslab/cycling/<Feature>/v1`.
 
@@ -23,7 +23,7 @@ A **protocol** is an [aurora-unicycler](https://github.com/EmpaEconversion/auror
 | --- | --- |
 | `CyclerInformationProvider` | `Manufacturer`, `Model`, `SerialNumber`, `FirmwareVersion`, `Channels`, `SupportedStepTypes`, `UnicyclerVersion` |
 | `ChannelController` | `ChannelStatuses` (observable), `GetChannelStatus`, `GetRunInformation`, `StartProtocol`, `ValidateProtocol`, `StopProtocol`, `PauseProtocol`, `ResumeProtocol`, `ClearChannel` |
-| `MeasurementProvider` | `GetRecordCount`, `GetData`, `GetDataInTimeRange`, `MonitorChannel` (observable), `ExportData` (observable) |
+| `MeasurementProvider` | `GetRecordCount`, `GetData`, `GetDataTable` (Arrow, for bulk reads), `GetDataInTimeRange`, `MonitorChannel` (observable), `ExportData` (observable) |
 
 Channel lifecycle:
 
@@ -103,7 +103,7 @@ async def create_app(config: AcmeConfig):
 
 The base class owns everything that must behave identically on every brand: per-channel locking, the state machine and the clear step, run IDs, protocol checks against channel limits, time-range search, monitoring, and the BDF export with its metadata. Backends convert to BDF units, report positive current as charging, report capacities and energies cumulative since the run started, and fill quantities they do not measure with NaN. They keep the `run_id` that `start` receives with the run, so it survives a server restart, and put the cycler's fault message in `fault_reason` when a run faults.
 
-Brand servers depend on `omnicycler-features[bdf]` and test with `omnicycler-features[testing]`.
+Brand servers depend on `omnicycler-features`, which includes the BDF libraries (batterydf, polars, pyarrow) and the conformance kit's pytest.
 
 ### Conformance kit
 
@@ -149,7 +149,7 @@ It simulates `channel_count` channels with an equivalent-circuit cell each, runn
 ## Development
 
 ```sh
-uv sync --locked --all-extras
+uv sync --locked
 uv run ruff format --check
 uv run ruff check
 uv run ty check
@@ -162,7 +162,7 @@ On Windows, run with `PYTHONUTF8=1` (or a UTF-8 console). Otherwise the CDK fail
 
 ## Known limitations
 
-- **batterydf 0.2.0 is not on PyPI yet.** The `bdf` extra pins it to a commit of the GitHub `main` branch, so installing `omnicycler-features[bdf]` needs git and access to GitHub. Switch the pin to `batterydf~=0.2.0` once it is released.
+- **batterydf 0.2.0 is not on PyPI yet.** The dependency pins it to a commit of the GitHub `main` branch, so installing `omnicycler-features` needs git and access to GitHub. Switch the pin to `batterydf~=0.2.0` once it is released.
 - The metadata sidecar leaves out what only a person or a BattINFO registry can state: registry identifiers (w3id IRIs), the test kind, creators and licence. Add them to the sidecar before publishing. BattINFO's schemas are still pre-1.0 and may change with batterydf.
 - Schedule-level BDF columns (`Schedule Charging Capacity` and so on) count from schedule-defined events the wire does not carry, so the export leaves them out.
 - `ClearChannel` is remembered in memory only. After a server restart, an ended run shows up again and has to be cleared again.
