@@ -10,7 +10,11 @@ First version.
 - `CyclerBackend` base class for brand servers, with per-channel locking, the channel state machine including the explicit `ClearChannel` step, protocol checks against channel limits, time-range search, monitoring and BDF export.
 - aurora-unicycler 0.5 protocols, validated with aurora-unicycler, with the `Sample` parameter merged in.
 - Battery Data Format export (CSV, Parquet) through batterydf 0.2 (BDF ontology 1.3, pinned to a GitHub commit until it is on PyPI), with every derivable column calculated by the ontology's definitions and without all-NaN columns, and a BattINFO metadata sidecar describing the test, cell, cycler, channel and protocol.
-- A run ID for every run (`RunInformation.RunId`) and the cycler's reason for a fault (`ChannelStatus.FaultReason`).
-- Typed async client `OmniCyclerClient`, including a gap-free `monitor()` stream.
-- Conformance kit (`omnicycler.features.testing`) and reference simulator (`omnicycler.features.simulator`).
+- Runs named by a client-chosen `RunId`: `StartProtocol` takes it and is idempotent for it, `ChannelStatus.RunId` reports each channel's run, and every control command and data read names the run it expects (`RunMismatchError`, `RunIdInUseError`). Record indices never change while a run exists.
+- `ClearChannel` deletes the run with all its data on every brand; `CyclerBackend.clear` is a required hook.
+- Protocols must set voltage safety limits.
+- The cycler's reason for a fault (`ChannelStatus.FaultReason`), and an optional `Sample.Identifier` written to the export's metadata.
+- Typed async client `OmniCyclerClient`, including a gap-free `monitor()` stream; its helpers in `client.base` are public for brand clients.
+- Conformance kit (`omnicycler.features.testing`), which also checks current sign and magnitude and the capacity and energy totals, and reference simulator (`omnicycler.features.simulator`).
+- BDF export built page by page as a table, so long runs are never held as `DataPoint` objects.
 - Decision records for the waived UniteLabs checklist rules in `docs/decisions/`.

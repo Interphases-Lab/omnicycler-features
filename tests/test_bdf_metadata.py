@@ -54,6 +54,7 @@ def metadata(protocol, points, state, *, run=None, step=2, **status):
     channel_status = ChannelStatus(
         channel=3,
         state=state,
+        run_id="run-1",
         voltage=3.7,
         current=0.0,
         test_time=points[-1].test_time,
@@ -63,7 +64,11 @@ def metadata(protocol, points, state, *, run=None, step=2, **status):
         **status,
     )
     return build_metadata(
-        identity=IDENTITY, channel=CHANNEL, run=run or run_information(protocol), status=channel_status, points=points
+        identity=IDENTITY,
+        channel=CHANNEL,
+        run=run or run_information(protocol),
+        status=channel_status,
+        last_point=points[-1] if points else None,
     )
 
 

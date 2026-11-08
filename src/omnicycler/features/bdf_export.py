@@ -17,7 +17,7 @@ import bdf
 import polars as pl
 from bdf import BDFValidationError, validate_df
 
-from .data_table import COLUMNS
+from .data_table import COLUMNS, INTEGER_FIELDS
 from .types import BdfExport, BdfFormat, DataPoint
 
 _PER_SEGMENT = {"Step": "Step Count / 1", "Cycle": "Cycle Count / 1"}
@@ -59,10 +59,38 @@ DERIVED_COLUMNS = (
 
 _FILE_NAMES = {BdfFormat.CSV: "data.bdf.csv", BdfFormat.PARQUET: "data.bdf.parquet"}
 
+_SCHEMA = {
+    field.name: pl.Int64 if field.name in INTEGER_FIELDS else pl.Float64 for field in dataclasses.fields(DataPoint)
+}
+"""Fixed column types, so tables built page by page concatenate."""
+
+
+def records_frame(points: list[DataPoint]) -> pl.DataFrame:
+    """
+    Convert records into a table of the measured quantities only, named by BDF preferred label.
+
+    Build long runs page by page with this and `pl.concat`, then call
+    `derive`: a table holds a run in a fraction of the memory its records take.
+    """
+    return pl.DataFrame([dataclasses.astuple(point) for point in points], schema=_SCHEMA, orient="row").rename(COLUMNS)
+
 
 def to_frame(points: list[DataPoint]) -> pl.DataFrame:
     """
-    Build a BDF table from the records of one run.
+    Build a BDF table from the records of one run; see `derive`.
+
+    Args:
+      points: The records of one run, in record index order.
+
+    Returns:
+      A table with BDF preferred labels as column names.
+    """
+    return derive(records_frame(points))
+
+
+def derive(frame: pl.DataFrame) -> pl.DataFrame:
+    """
+    Complete a table of measured quantities, from `records_frame`, into a BDF table.
 
     Adds the derived columns by their BDF ontology definitions: net is
     charging minus discharging, cumulative is charging plus discharging,
@@ -72,16 +100,11 @@ def to_frame(points: list[DataPoint]) -> pl.DataFrame:
     dropped.
 
     Args:
-      points: The records of one run, in record index order.
+      frame: The measured quantities of one run, in record index order.
 
     Returns:
       A table with BDF preferred labels as column names.
     """
-    frame = pl.DataFrame(
-        [dataclasses.astuple(point) for point in points],
-        schema=[field.name for field in dataclasses.fields(DataPoint)],
-        orient="row",
-    ).rename(COLUMNS)
     frame = frame.with_columns(
         (pl.col("Charging Capacity / Ah") - pl.col("Discharging Capacity / Ah")).alias("Net Capacity / Ah"),
         (pl.col("Charging Capacity / Ah") + pl.col("Discharging Capacity / Ah")).alias("Cumulative Capacity / Ah"),
@@ -147,7 +170,17 @@ def encode_bdf(points: list[DataPoint], data_format: BdfFormat, metadata: bdf.Me
     Raises:
       ValueError: If the resulting table is not valid BDF.
     """
-    frame = to_frame(points)
+    return encode_frame(records_frame(points), data_format, metadata)
+
+
+def encode_frame(frame: pl.DataFrame, data_format: BdfFormat, metadata: bdf.Metadata) -> BdfExport:
+    """
+    Encode a table of measured quantities, from `records_frame`, as a BDF file with its metadata sidecar.
+
+    Raises:
+      ValueError: If the resulting table is not valid BDF.
+    """
+    frame = derive(frame)
     validate_frame(frame)
     with tempfile.TemporaryDirectory(prefix="omnicycler-bdf-") as directory:
         path = pathlib.Path(directory) / _FILE_NAMES[data_format]
@@ -191,4 +224,13 @@ def _segment_totals() -> list[pl.Expr]:
     return expressions
 
 
-__all__ = ["COLUMNS", "DERIVED_COLUMNS", "encode_bdf", "to_frame", "validate_frame"]
+__all__ = [
+    "COLUMNS",
+    "DERIVED_COLUMNS",
+    "derive",
+    "encode_bdf",
+    "encode_frame",
+    "records_frame",
+    "to_frame",
+    "validate_frame",
+]

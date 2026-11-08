@@ -9,6 +9,7 @@ from aurora_unicycler import CyclingProtocol
 
 from .. import __version__
 from ..backend import CyclerBackend, CyclerIdentity
+from ..errors import NoRunError
 from ..protocol import encode_protocol
 from ..simulation import MEASURED_QUANTITIES, ProtocolSimulation
 from ..types import (
@@ -116,8 +117,15 @@ class SimulatedCyclerBackend(CyclerBackend):
         return [self._status(channel) for channel in range(1, self._channel_count + 1)]
 
     @typing.override
+    async def read_status(self, channel: int) -> ChannelStatus:
+        return self._status(channel)
+
+    @typing.override
     async def read_run_information(self, channel: int) -> RunInformation:
-        run = self._runs[channel]
+        run = self._runs.get(channel)
+        if run is None:
+            msg = f"Channel {channel} holds no run."
+            raise NoRunError(msg)
         return RunInformation(
             run_id=run.run_id,
             sample=run.sample,
@@ -127,14 +135,15 @@ class SimulatedCyclerBackend(CyclerBackend):
         )
 
     @typing.override
-    async def read_data(self, channel: int, from_index: int, count: int) -> list[DataPoint]:
+    async def read_data(self, channel: int, run_id: str, from_index: int, count: int) -> list[DataPoint]:
         run = self._runs.get(channel)
-        return [] if run is None else run.points[from_index : from_index + count]
+        if run is None or run.run_id != run_id:
+            return []
+        return run.points[from_index : from_index + count]
 
     @typing.override
-    async def start(self, channel: int, protocol: CyclingProtocol, run_id: str) -> None:
+    async def start(self, channel: int, protocol: CyclingProtocol, sample: Sample, run_id: str) -> None:
         start_time = time.time()
-        sample = Sample(name=protocol.sample.name, nominal_capacity=(protocol.sample.capacity_mAh or 0.0) / 1000)
         simulation = ProtocolSimulation(protocol, start_unix_time=start_time, maximal_current=self._maximal_current)
         run = _Run(run_id=run_id, sample=sample, protocol=protocol, start_time=start_time, simulation=simulation)
         run.points.extend(simulation.advance(0.0))
@@ -163,6 +172,7 @@ class SimulatedCyclerBackend(CyclerBackend):
             return ChannelStatus(
                 channel=channel,
                 state=state,
+                run_id="",
                 voltage=math.nan,
                 current=math.nan,
                 test_time=0.0,
@@ -174,6 +184,7 @@ class SimulatedCyclerBackend(CyclerBackend):
         return ChannelStatus(
             channel=channel,
             state=run.state,
+            run_id=run.run_id,
             voltage=simulation.voltage,
             current=simulation.current if run.state is ChannelState.RUNNING else 0.0,
             test_time=simulation.test_time,

@@ -1,3 +1,4 @@
+import collections.abc
 import json
 
 import pytest
@@ -23,8 +24,12 @@ METHOD = [
 ]
 
 
-def encode(document: object) -> bytes:
-    return json.dumps(document).encode()
+SAFETY = {"min_voltage_V": 2.5, "max_voltage_V": 4.3}
+
+
+def encode(document: collections.abc.Mapping[str, object], *, safety: bool = True) -> bytes:
+    """Encode a protocol document, with voltage limits unless `safety` is false."""
+    return json.dumps({"safety": SAFETY, **document} if safety else document).encode()
 
 
 def test_sample_is_merged_with_capacity_in_mah():
@@ -76,6 +81,23 @@ def test_placeholder_sample_name_is_rejected(name: str):
 def test_invalid_protocols_are_rejected(data: bytes):
     with pytest.raises(InvalidProtocolError):
         parse_protocol(data, SAMPLE)
+
+
+@pytest.mark.parametrize(
+    ("safety", "missing"),
+    [
+        (None, "safety.min_voltage_V and no safety.max_voltage_V"),
+        ({"max_voltage_V": 4.3}, "safety.min_voltage_V"),
+        ({"min_voltage_V": 2.5, "max_current_mA": 100}, "safety.max_voltage_V"),
+    ],
+)
+def test_protocol_without_voltage_limits_is_rejected(safety: dict[str, float] | None, missing: str):
+    document: dict[str, object] = {"record": {"time_s": 10}, "method": METHOD}
+    if safety is not None:
+        document["safety"] = safety
+
+    with pytest.raises(InvalidProtocolError, match=f"sets no {missing}"):
+        parse_protocol(encode(document, safety=False), SAMPLE)
 
 
 def test_technique_steps_skip_tags_and_loops():

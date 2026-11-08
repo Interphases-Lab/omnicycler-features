@@ -21,7 +21,6 @@ import json
 import math
 import typing
 import warnings
-from collections.abc import Sequence
 
 from aurora_unicycler import (
     ConstantCurrent,
@@ -38,7 +37,15 @@ from bdf import Metadata
 
 from . import __version__
 from .backend import ENDED_STATES, CyclerIdentity
-from .types import ChannelInformation, ChannelState, ChannelStatus, DataPoint, ProtocolFormat, RunInformation
+from .types import (
+    ChannelInformation,
+    ChannelState,
+    ChannelStatus,
+    DataPoint,
+    ProtocolFormat,
+    RunInformation,
+    Sample,
+)
 
 Document = dict[str, typing.Any]
 
@@ -66,7 +73,7 @@ def build_metadata(
     channel: ChannelInformation,
     run: RunInformation,
     status: ChannelStatus,
-    points: Sequence[DataPoint],
+    last_point: DataPoint | None,
 ) -> Metadata:
     """
     Describe one run as batterydf metadata.
@@ -76,15 +83,15 @@ def build_metadata(
       channel: The channel that ran the protocol.
       run: The run.
       status: The channel's status when the export was made.
-      points: The run's records, in record index order.
+      last_point: The run's last record, or None without records.
 
     Returns:
       The BattINFO test, cell, equipment, channel and test-protocol records,
       validated against batterydf's schemas.
     """
     document: Document = {
-        "battinfo_test": {"test": _test(identity, run, status, points), "provenance": _provenance()},
-        "battinfo_cell": {"cell_instance": {"name": run.sample.name}},
+        "battinfo_test": {"test": _test(identity, run, status, last_point), "provenance": _provenance()},
+        "battinfo_cell": {"cell_instance": _cell(run.sample)},
         "battinfo_equipment": {"equipment": _equipment(identity)},
         "battinfo_channel": {"channel": _channel(channel)},
     }
@@ -217,7 +224,7 @@ def _technique(step_id: int, step: Step) -> Document:  # noqa: C901, PLR0912  # 
 
 
 def _test(
-    identity: CyclerIdentity, run: RunInformation, status: ChannelStatus, points: Sequence[DataPoint]
+    identity: CyclerIdentity, run: RunInformation, status: ChannelStatus, last_point: DataPoint | None
 ) -> Document:
     test: Document = {
         "identifier": run.run_id,
@@ -227,7 +234,7 @@ def _test(
         "status": TEST_STATUS.get(status.state, "other"),
         "conditions": {"nominal_capacity": {"value": run.sample.nominal_capacity, "unit": "Ah"}},
     }
-    ended_at = _ended_at(status, points)
+    ended_at = _ended_at(status, last_point)
     if ended_at is not None:
         test["ended_at"] = ended_at
     deviation = _deviation(status, ended_at)
@@ -236,10 +243,10 @@ def _test(
     return test
 
 
-def _ended_at(status: ChannelStatus, points: Sequence[DataPoint]) -> int | None:
-    if status.state not in ENDED_STATES or not points or not math.isfinite(points[-1].unix_time):
+def _ended_at(status: ChannelStatus, last_point: DataPoint | None) -> int | None:
+    if status.state not in ENDED_STATES or last_point is None or not math.isfinite(last_point.unix_time):
         return None
-    return int(points[-1].unix_time)
+    return int(last_point.unix_time)
 
 
 def _deviation(status: ChannelStatus, ended_at: int | None) -> Document | None:
@@ -262,6 +269,13 @@ def _deviation(status: ChannelStatus, ended_at: int | None) -> Document | None:
     if ended_at is not None:
         deviation["occurred_at"] = ended_at
     return deviation
+
+
+def _cell(sample: Sample) -> Document:
+    cell: Document = {"name": sample.name}
+    if sample.identifier:
+        cell["serial_number"] = sample.identifier
+    return cell
 
 
 def _equipment(identity: CyclerIdentity) -> Document:

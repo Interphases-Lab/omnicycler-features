@@ -2,7 +2,7 @@ from sila.client import FeatureNamespace
 
 from .. import CATEGORY, ORIGINATOR
 from ..types import ChannelInformation, StepType
-from ._base import ErrorMap, error_map, from_wire, list_from_wire, ms, translate_errors
+from .base import ErrorMap, error_map, from_wire, list_from_wire, ms, translate_errors
 
 FEATURE = f"{ORIGINATOR}/{CATEGORY}/CyclerInformationProvider/v1"
 ERRORS: ErrorMap = error_map()

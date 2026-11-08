@@ -22,6 +22,15 @@ from .units import AMPERE, AMPERE_HOUR, DEGREE_CELSIUS, HERTZ, OHM, PASCAL, SECO
 
 NonNegativeInteger = typing.Annotated[int, sila.constraints.MinimalInclusive(0)]
 
+RunId = typing.Annotated[str, sila.constraints.MinimalLength(1), sila.constraints.MaximalLength(255)]
+"""
+The identifier of a run, chosen by the client that starts it.
+
+Every command that acts on a run, and every read of its data, names the run
+it expects, so a client never acts on or reads a run other than the one it
+means. Use a fresh UUID unless you have your own unique identifier.
+"""
+
 
 class ChannelState(enum.Enum):
     """
@@ -99,10 +108,13 @@ class Sample(sila.CustomDataType):
     Attributes:
       Name: The name of the cell, used for the run and its data files.
       NominalCapacity: The nominal capacity of the cell, the reference for C-rates in the protocol.
+      Identifier: An identifier of the cell outside OmniCycler, such as its serial number or a LIMS barcode, or
+        empty if it has none. It is written to the export's metadata as the cell's serial number.
     """
 
     name: typing.Annotated[str, sila.constraints.MinimalLength(1), sila.constraints.MaximalLength(255)]
     nominal_capacity: typing.Annotated[float, AMPERE_HOUR, sila.constraints.MinimalExclusive(0.0)]
+    identifier: typing.Annotated[str, sila.constraints.MaximalLength(255)] = ""
 
 
 @dataclasses.dataclass
@@ -133,19 +145,23 @@ class ChannelStatus(sila.CustomDataType):
     Attributes:
       Channel: The channel number.
       State: The state of the channel.
+      RunId: The run the channel holds, or empty without a run. An idle channel never holds a run; a running,
+        paused, finished, stopped or faulted channel always does. An unavailable channel may still hold one, whose
+        data stays readable.
       Voltage: The latest measured voltage, or NaN if none is available.
       Current: The latest measured current, positive when charging, or NaN if none is available.
       TestTime: The time since the run started, or zero without a run.
       CycleCount: The cycle count of the run, or zero without a run.
       ProtocolStep: The position of the executing step in the protocol's method list, counting from one, or zero
         without a run.
-      RecordCount: The number of data records of the run.
+      RecordCount: The number of data records of the run, or zero without a run.
       FaultReason: Why the protocol faulted, as the cycler reports it. Empty unless State is Faulted, and empty if
         the cycler gives no reason.
     """
 
     channel: typing.Annotated[int, sila.constraints.MinimalInclusive(1)]
     state: ChannelState
+    run_id: str
     voltage: typing.Annotated[float, VOLT]
     current: typing.Annotated[float, AMPERE]
     test_time: typing.Annotated[float, SECOND]
@@ -170,7 +186,7 @@ class RunInformation(sila.CustomDataType):
     The run a channel currently holds.
 
     Attributes:
-      RunId: An identifier the server gives the run when it starts, unique across runs, for bookkeeping.
+      RunId: The identifier the client gave the run when it started it.
       Sample: The cell under test.
       ProtocolFormat: How Protocol is encoded.
       Protocol: The protocol as executed, with the sample merged in for aurora-unicycler protocols.
@@ -190,7 +206,8 @@ class DataPoint(sila.CustomDataType):
     One data record of a run, in Battery Data Format quantities.
 
     Attributes:
-      RecordIndex: The position of this record in the run, counting from zero without gaps.
+      RecordIndex: The position of this record in the run, counting from zero without gaps. A record keeps its
+        index for as long as the run exists.
       TestTime: The time since the run started.
       UnixTime: The Unix time of the measurement.
       Voltage: The measured voltage.
@@ -297,6 +314,7 @@ __all__ = [
     "DataPoint",
     "MeasuredQuantity",
     "ProtocolFormat",
+    "RunId",
     "RunInformation",
     "Sample",
     "StepType",
