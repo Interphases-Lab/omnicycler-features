@@ -2,6 +2,7 @@
 
 import asyncio
 import collections.abc
+import dataclasses
 import io
 import itertools
 import json
@@ -11,6 +12,7 @@ import statistics
 import uuid
 
 import pytest
+from sila.client import ClientConfig
 
 from ..backend import ACTIVE_STATES, ENDED_STATES
 from ..client import InvalidParameterError, OmniCyclerClient
@@ -65,6 +67,10 @@ INTEGRAL_TOLERANCE = 0.03
 
 FOREIGN_RUN = "conformance-not-this-run"
 """A RunId no test ever starts."""
+
+
+Restart = collections.abc.Callable[[], collections.abc.Awaitable[ClientConfig]]
+"""Stops the server under test, starts it again, and returns the config to reach it."""
 
 
 def _run_id() -> str:
@@ -602,6 +608,96 @@ class ConformanceSuite:
         assert metadata.battinfo_equipment.equipment.serial_number
         assert metadata.battinfo_test_protocol.method
 
+    # Restarts.
+
+    async def test_ended_run_survives_restart(
+        self,
+        omnicycler_client: OmniCyclerClient,
+        omnicycler_short_protocol: bytes,
+        omnicycler_run_timeout: float,
+        omnicycler_restart: Restart,
+        omnicycler_keeps_runs: bool,  # noqa: FBT001  # a fixture
+    ) -> None:
+        _require_kept_runs(omnicycler_keeps_runs)
+        channel, run_id = await self._finished_channel(
+            omnicycler_client, omnicycler_short_protocol, omnicycler_run_timeout
+        )
+        run = await omnicycler_client.channels.get_run_information(channel.channel)
+        points = await omnicycler_client.measurements.get_all_data(channel.channel, run_id)
+
+        async with OmniCyclerClient.connect(await omnicycler_restart(), timeout=30) as client:
+            status = await client.channels.wait_for_state(
+                channel.channel, {ChannelState.FINISHED}, timeout=omnicycler_run_timeout
+            )
+            assert status.run_id == run_id
+            assert status.record_count == len(points)
+            again = await client.channels.get_run_information(channel.channel)
+            assert again.run_id == run.run_id
+            assert again.sample == run.sample
+            assert again.protocol_format is run.protocol_format
+            assert again.protocol == run.protocol
+            assert math.isclose(again.start_time, run.start_time, abs_tol=1e-3)
+            _assert_same_points(await client.measurements.get_all_data(channel.channel, run_id), points)
+
+            await client.channels.clear_channel(channel.channel, run_id)
+            assert (await client.channels.get_channel_status(channel.channel)).state is ChannelState.IDLE
+
+    async def test_cleared_channel_stays_idle_after_restart(
+        self,
+        omnicycler_client: OmniCyclerClient,
+        omnicycler_short_protocol: bytes,
+        omnicycler_run_timeout: float,
+        omnicycler_restart: Restart,
+        omnicycler_keeps_runs: bool,  # noqa: FBT001  # a fixture
+    ) -> None:
+        _require_kept_runs(omnicycler_keeps_runs)
+        channel, run_id = await self._finished_channel(
+            omnicycler_client, omnicycler_short_protocol, omnicycler_run_timeout
+        )
+        await omnicycler_client.channels.clear_channel(channel.channel, run_id)
+
+        async with OmniCyclerClient.connect(await omnicycler_restart(), timeout=30) as client:
+            status = await client.channels.wait_for_state(
+                channel.channel, {ChannelState.IDLE}, timeout=omnicycler_run_timeout
+            )
+            assert status.run_id == ""
+            with pytest.raises(NoRunError):
+                await client.measurements.get_record_count(channel.channel, run_id)
+            with pytest.raises(NoRunError):
+                await client.channels.get_run_information(channel.channel)
+
+    async def test_active_run_survives_restart(
+        self,
+        omnicycler_client: OmniCyclerClient,
+        omnicycler_long_protocol: bytes,
+        omnicycler_run_timeout: float,
+        omnicycler_restart: Restart,
+        omnicycler_keeps_runs: bool,  # noqa: FBT001  # a fixture
+    ) -> None:
+        """A run active at a restart may go on or end, but keeps its RunId and every record taken before."""
+        _require_kept_runs(omnicycler_keeps_runs)
+        channels, measurements = omnicycler_client.channels, omnicycler_client.measurements
+        channel = await self._idle_channel(omnicycler_client)
+        run_id = await channels.start_protocol(channel.channel, omnicycler_long_protocol, sample_for(channel))
+        async with asyncio.timeout(omnicycler_run_timeout), channels.subscribe_channel_statuses() as statuses:
+            async for snapshot in statuses:
+                if any(status.channel == channel.channel and status.record_count >= 2 for status in snapshot):
+                    break
+        points = await measurements.get_all_data(channel.channel, run_id)
+
+        async with OmniCyclerClient.connect(await omnicycler_restart(), timeout=30) as client:
+            status = await client.channels.wait_for_state(
+                channel.channel, ACTIVE_STATES | ENDED_STATES, timeout=omnicycler_run_timeout
+            )
+            assert status.run_id == run_id
+            assert status.record_count >= len(points)
+            later = await client.measurements.get_all_data(channel.channel, run_id)
+            _assert_same_points(later[: len(points)], points)
+
+            await client.channels.stop_protocol(channel.channel, run_id)
+            await client.channels.wait_for_state(channel.channel, ENDED_STATES, timeout=omnicycler_run_timeout)
+            await client.channels.clear_channel(channel.channel, run_id)
+
     # Helpers.
 
     async def _idle_channels(self, client: OmniCyclerClient) -> list[ChannelInformation]:
@@ -631,6 +727,22 @@ class ConformanceSuite:
     async def _statuses(client: OmniCyclerClient) -> list[ChannelStatus]:
         async with asyncio.timeout(10), client.channels.subscribe_channel_statuses() as statuses:
             return await anext(statuses)
+
+
+def _require_kept_runs(keeps_runs: bool) -> None:  # noqa: FBT001
+    if not keeps_runs:
+        pytest.skip("The server keeps its runs in memory (omnicycler_keeps_runs).")
+
+
+def _assert_same_points(actual: list[DataPoint], expected: list[DataPoint]) -> None:
+    """Assert that two lists of records are equal field by field, with NaN equal to NaN."""
+    assert len(actual) == len(expected)
+    for got, want in zip(actual, expected, strict=True):
+        for field in dataclasses.fields(DataPoint):
+            left, right = getattr(got, field.name), getattr(want, field.name)
+            if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+                continue
+            assert left == right, f"Record {want.record_index}: {field.name} is {left}, was {right}."
 
 
 def _step_points(points: list[DataPoint], position: int) -> list[DataPoint]:

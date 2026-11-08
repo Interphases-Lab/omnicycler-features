@@ -20,3 +20,8 @@ def omnicycler_config() -> SimulatorConfig:
 @pytest.fixture
 def omnicycler_run_timeout() -> float:
     return 30.0
+
+
+@pytest.fixture
+def omnicycler_keeps_runs() -> bool:
+    return False  # the reference simulator keeps its runs in memory
