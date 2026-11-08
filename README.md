@@ -154,6 +154,8 @@ class TestConformance(ConformanceSuite):
 
 The suite runs the server in-process on a free port, in simulation mode, and drives it through the typed client. Besides the lifecycle, the run identity rules and the data paths, it checks the conversions every brand must get right: the current of the short protocol's charge and discharge steps has the right sign and magnitude in ampere, and the capacities and energies never decrease and match the integrals of the measured current and power.
 
+It also restarts the server (`omnicycler_restart`: stop it, start it again from the same config) and checks that an ended run keeps its `RunId`, run information and every record with its index, that a cleared channel stays idle, and that a run active at the restart keeps its `RunId` and the records taken before it. The config from `omnicycler_config` must therefore keep the server's storage across the restart, for example under `tmp_path`. A simulated device must outlive the server as the real one does. Only a server that keeps its runs in memory, like the reference simulator, may override `omnicycler_keeps_runs` to return `False`, which skips these tests.
+
 Override `omnicycler_short_protocol`, `omnicycler_long_protocol`, `omnicycler_faulting_protocol` or `omnicycler_run_timeout` if the brand's simulation needs different protocols or more time. An overridden short protocol must keep the default's shape: a constant-current charge as step 1 and a discharge as step 3, both at `testing.protocols.CHARGE_RATE`, each recording at least three records. The faulting protocol must trip a safety limit; the default sets a capacity limit of 1 % of the sample's capacity. The default protocols use voltage limits of 2.5 V to 4.3 V.
 
 ## Reference simulator
@@ -177,12 +179,10 @@ uv run pytest
 uv build
 ```
 
-On Windows, run with `PYTHONUTF8=1` (or a UTF-8 console). Otherwise the CDK fails while logging an error to a cp1252 console and replaces every defined or validation error with an undefined one. The test suite reconfigures its own output, so pytest is not affected.
-
 ## Known limitations
 
 - **batterydf 0.2.0 is not on PyPI yet.** The dependency pins it to a commit of the GitHub `main` branch, so installing `omnicycler-features` needs git and access to GitHub. Switch the pin to `batterydf~=0.2.0` once it is released.
 - The metadata sidecar leaves out what only a person or a BattINFO registry can state: registry identifiers (w3id IRIs), the test kind, creators and licence. Add them to the sidecar before publishing. BattINFO's schemas are still pre-1.0 and may change with batterydf.
 - Schedule-level BDF columns (`Schedule Charging Capacity` and so on) count from schedule-defined events the wire does not carry, so the export leaves them out.
-- The reference simulator keeps its runs in memory: a restart loses them.
+- The reference simulator keeps its runs in memory: a restart loses them, so it skips the conformance kit's restart tests.
 - The servers have no access control: any client that reaches a server can start, stop and clear runs. The `RunId` checks guard against acting on the wrong run, not against unauthorised clients. Use TLS, and keep the servers on a trusted network.

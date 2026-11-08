@@ -2,6 +2,11 @@
 
 All notable changes to this package. The package follows semantic versioning; each feature's `version` moves independently (see the best-practices guide).
 
+## Unreleased
+
+- The conformance kit restarts the server: an ended run keeps its `RunId`, run information and records, a cleared channel stays idle, and an active run keeps its `RunId` and earlier records. New fixtures `omnicycler_restart` and `omnicycler_keeps_runs`.
+- `register_standard_features` switches the console to UTF-8 (`omnicycler.features.console.use_utf8_console`), so servers no longer need `PYTHONUTF8=1` on Windows.
+
 ## 0.1.0 – 2026-11-05
 
 First version.
