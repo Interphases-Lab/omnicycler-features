@@ -19,8 +19,6 @@ and in a test module:
 
     class TestConformance(ConformanceSuite):
         pass
-
-Requires the `testing` and `bdf` extras.
 """
 
 from .protocols import faulting_protocol, long_protocol, sample_for, short_protocol

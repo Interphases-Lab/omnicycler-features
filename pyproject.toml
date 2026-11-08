@@ -9,18 +9,14 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aurora-unicycler~=0.5.0",
-    "unitelabs-cdk~=0.18.0",
-]
-
-[project.optional-dependencies]
-bdf = [
     # batterydf 0.2.0 is not on PyPI yet; pinned to the GitHub main commit that reports 0.2.0. Switch to
     # "batterydf~=0.2.0" once it is released. A direct reference keeps the pin in the published metadata.
     "batterydf @ git+https://github.com/battery-data-alliance/battery-data-format@354d2e5695530c806bd02801c5c179ea39a4fa70",
-]
-testing = [
+    "polars",
+    "pyarrow",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
+    "unitelabs-cdk~=0.18.0",
 ]
 
 [build-system]

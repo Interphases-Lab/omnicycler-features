@@ -18,6 +18,7 @@ from omnicycler.features.client import (
     ProtocolMismatchError,
 )
 from omnicycler.features.client._base import from_wire, list_from_wire, to_wire
+from omnicycler.features.client.measurement_provider import PAGE_SIZE
 from omnicycler.features.cycler_information_provider import CyclerInformationProvider
 from omnicycler.features.errors import ChannelBusyError
 from omnicycler.features.simulator import SimulatedCyclerBackend
@@ -146,6 +147,22 @@ async def test_monitor_fills_gaps_from_get_data():
     assert [p.record_index for p in await client._fill(1, 2, stored[5:7])] == [2, 3, 4, 5, 6]
     assert [p.record_index for p in await client._fill(1, 6, stored[4:8])] == [6, 7]
     assert await client._fill(1, 9, stored[0:3]) == []
+
+
+async def test_monitor_fills_gaps_longer_than_a_page():
+    stored = [_point(index) for index in range(2 * PAGE_SIZE + 10)]
+    requests = []
+
+    class Recorder(MeasurementProviderClient):
+        async def get_data(self, channel, from_index, count, *, timeout=None):  # noqa: ARG002
+            requests.append((from_index, count))
+            return stored[from_index : from_index + count]
+
+    client = Recorder(typing.cast("typing.Any", None))
+
+    filled = await client._fill(1, 3, stored[2 * PAGE_SIZE + 5 :])
+    assert [p.record_index for p in filled] == list(range(3, 2 * PAGE_SIZE + 10))
+    assert all(count <= PAGE_SIZE for _, count in requests)
 
 
 def test_to_wire_uses_identifiers_and_enum_strings():

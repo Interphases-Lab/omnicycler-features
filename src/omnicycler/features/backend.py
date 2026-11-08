@@ -28,6 +28,8 @@ import uuid
 
 from aurora_unicycler import ConstantCurrent, ConstantVoltage, CyclingProtocol, VoltageScan
 
+from .bdf_export import encode_bdf
+from .data_table import encode_table
 from .errors import (
     ChannelBusyError,
     ChannelNotClearedError,
@@ -58,6 +60,9 @@ ENDED_STATES = frozenset({ChannelState.FINISHED, ChannelState.STOPPED, ChannelSt
 
 MAXIMAL_RECORDS_PER_RESPONSE = 5000
 """The most data records one response carries; keeps every response well below gRPC's 4 MiB message limit."""
+
+MAXIMAL_RECORDS_PER_TABLE = 100_000
+"""The most data records one `GetDataTable` response carries, sent by SiLA binary transfer."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -326,6 +331,22 @@ class CyclerBackend(abc.ABC):
             return []
         return await self.read_data(channel, from_index, min(count, MAXIMAL_RECORDS_PER_RESPONSE))
 
+    async def get_data_table(self, channel: int, from_index: int, count: int, labels: list[str]) -> bytes:
+        """
+        Return up to `count` records from `from_index` on as an Arrow IPC stream; see `data_table.encode_table`.
+
+        Brand backends may override this, for example to read the vendor's
+        data file in bulk.
+        """
+        points: list[DataPoint] = []
+        count = min(count, MAXIMAL_RECORDS_PER_TABLE)
+        while len(points) < count:
+            batch = await self.get_data(channel, from_index + len(points), count - len(points))
+            if not batch:
+                break
+            points.extend(batch)
+        return encode_table(points, labels)
+
     async def get_data_in_time_range(self, channel: int, from_test_time: float, to_test_time: float) -> list[DataPoint]:
         """
         Return the records of a channel's run whose test time lies within an inclusive range.
@@ -376,14 +397,12 @@ class CyclerBackend(abc.ABC):
         Brand backends may override this, for example to convert the vendor's
         native data file instead of the records; `bdf_metadata.build_metadata`
         and `bdf_export.encode_bdf` then still give the same sidecar and
-        checks. Requires the `bdf` extra.
+        checks.
 
         Raises:
           NoRunError: If the channel holds no run.
         """
-        # optional extra, imported on demand
-        from .bdf_export import encode_bdf  # noqa: PLC0415
-        from .bdf_metadata import build_metadata  # noqa: PLC0415
+        from .bdf_metadata import build_metadata  # noqa: PLC0415  # it imports this module
 
         run = await self.get_run_information(channel)
         points: list[DataPoint] = []
@@ -594,6 +613,7 @@ __all__ = [
     "ACTIVE_STATES",
     "ENDED_STATES",
     "MAXIMAL_RECORDS_PER_RESPONSE",
+    "MAXIMAL_RECORDS_PER_TABLE",
     "CyclerBackend",
     "CyclerIdentity",
     "Monitor",

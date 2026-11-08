@@ -48,6 +48,7 @@ RESPONSES = {
     "ClearChannel": [],
     "GetRecordCount": ["RecordCount"],
     "GetData": ["DataPoints"],
+    "GetDataTable": ["Table"],
     "GetDataInTimeRange": ["DataPoints"],
     "MonitorChannel": ["NextIndex", "RunEnded"],
     "ExportData": ["Data", "Metadata"],

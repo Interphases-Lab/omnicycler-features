@@ -2,9 +2,11 @@ import collections.abc
 import contextlib
 import dataclasses
 
+import pyarrow as pa
 from sila.client import FeatureNamespace
 
 from .. import CATEGORY, ORIGINATOR
+from ..data_table import decode_table
 from ..errors import DataRangeTooLargeError, NoRunError
 from ..types import BdfExport, BdfFormat, DataPoint
 from ._base import (
@@ -18,12 +20,16 @@ from ._base import (
     to_wire,
     translate_errors,
 )
+from .errors import IncompatibleServerError
 
 FEATURE = f"{ORIGINATOR}/{CATEGORY}/MeasurementProvider/v1"
 ERRORS: ErrorMap = error_map(DataRangeTooLargeError, NoRunError)
 
 PAGE_SIZE = 5000
 """The most records one `get_data` call may request."""
+
+TABLE_PAGE_SIZE = 100_000
+"""The most records one `get_data_table` call may request."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,6 +65,36 @@ class MeasurementProviderClient:
         with translate_errors(ERRORS):
             responses = await self._ns.GetData(Channel=channel, FromIndex=from_index, Count=count, timeout=ms(timeout))
         return list_from_wire(DataPoint, response(responses, "DataPoints"))
+
+    async def get_data_table(
+        self,
+        channel: int,
+        from_index: int,
+        count: int,
+        columns: collections.abc.Sequence[str] = (),
+        *,
+        timeout: float | None = None,
+    ) -> pa.Table:
+        """
+        Get up to `count` consecutive records from `from_index` on as an Arrow table, for bulk reads.
+
+        `count` is at most `TABLE_PAGE_SIZE`. Columns are named by BDF preferred label (see
+        `data_table.COLUMNS`); `columns` selects some of them, and empty means all. Unmeasured values are null,
+        and all-null columns are left out.
+
+        Raises:
+          IncompatibleServerError: If the server does not offer `GetDataTable`.
+        """
+        try:
+            command = self._ns.GetDataTable
+        except AttributeError:
+            msg = "The server's MeasurementProvider does not offer GetDataTable; use get_data."
+            raise IncompatibleServerError(msg) from None
+        with translate_errors(ERRORS):
+            responses = await command(
+                Channel=channel, FromIndex=from_index, Count=count, Columns=list(columns), timeout=ms(timeout)
+            )
+        return decode_table(from_wire(bytes, response(responses, "Table")))
 
     async def get_data_in_time_range(
         self, channel: int, from_test_time: float, to_test_time: float, *, timeout: float | None = None
@@ -151,10 +187,17 @@ class MeasurementProviderClient:
                 return
 
     async def _fill(self, channel: int, expected: int, batch: list[DataPoint]) -> list[DataPoint]:
+        # A busy server can drop intermediate responses, so a gap may span many pages.
         fresh = [point for point in batch if point.record_index >= expected]
-        if not fresh or fresh[0].record_index == expected:
+        if not fresh:
             return fresh
-        gap = await self.get_data(channel, expected, min(PAGE_SIZE, fresh[0].record_index - expected))
+        gap: list[DataPoint] = []
+        while expected < fresh[0].record_index:
+            page = await self.get_data(channel, expected, min(PAGE_SIZE, fresh[0].record_index - expected))
+            if not page:
+                break
+            gap.extend(page)
+            expected = page[-1].record_index + 1
         return [*gap, *fresh]
 
 

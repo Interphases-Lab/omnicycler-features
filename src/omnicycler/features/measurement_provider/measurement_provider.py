@@ -4,7 +4,8 @@ import typing
 from unitelabs.cdk import sila
 
 from .. import CATEGORY, ORIGINATOR
-from ..backend import MAXIMAL_RECORDS_PER_RESPONSE, CyclerBackend
+from ..backend import MAXIMAL_RECORDS_PER_RESPONSE, MAXIMAL_RECORDS_PER_TABLE, CyclerBackend
+from ..data_table import COLUMNS
 from ..errors import DataRangeTooLargeError, NoRunError
 from ..parameters import ChannelNumber, JsonDocument, restrict_channels
 from ..types import BdfFormat, DataPoint
@@ -20,6 +21,11 @@ RecordIndex = typing.Annotated[int, sila.constraints.MinimalInclusive(0)]
 RecordCount = typing.Annotated[
     int, sila.constraints.MinimalInclusive(1), sila.constraints.MaximalInclusive(MAXIMAL_RECORDS_PER_RESPONSE)
 ]
+TableRecordCount = typing.Annotated[
+    int, sila.constraints.MinimalInclusive(1), sila.constraints.MaximalInclusive(MAXIMAL_RECORDS_PER_TABLE)
+]
+ColumnLabel = typing.Annotated[str, sila.constraints.Set(list(COLUMNS.values()))]
+ArrowStream = typing.Annotated[bytes, sila.constraints.ContentType("application", "vnd.apache.arrow.stream")]
 TestTime = typing.Annotated[float, SECOND, sila.constraints.MinimalInclusive(0.0)]
 MonitorDuration = typing.Annotated[
     float, SECOND, sila.constraints.MinimalExclusive(0.0), sila.constraints.MaximalInclusive(MAXIMAL_MONITOR_DURATION)
@@ -34,6 +40,8 @@ class MeasurementProvider(sila.Feature):
     NaN. Records stay available until the channel is cleared with `ChannelController.ClearChannel`, and a channel
     without a run has no records. Follow a running protocol with `MonitorChannel`, read any part of the data with
     `GetData` or `GetDataInTimeRange`, and fetch the complete run as a Battery Data Format file with `ExportData`.
+    For bulk reads, `GetDataTable` returns the same records as one binary Arrow table, which is much faster to
+    transfer and decode than `GetData`.
     """
 
     def __init__(self, backend: CyclerBackend, *, poll_interval: float = 1.0) -> None:
@@ -47,6 +55,7 @@ class MeasurementProvider(sila.Feature):
         handlers = [
             self.get_record_count,
             self.get_data,
+            self.get_data_table,
             self.get_data_in_time_range,
             self.monitor_channel,
             self.export_data,
@@ -80,6 +89,30 @@ class MeasurementProvider(sila.Feature):
           DataPoints: The records from FromIndex on, fewer than Count at the end of the data.
         """
         return await self.backend.get_data(channel, from_index, count)
+
+    @sila.UnobservableCommand()
+    async def get_data_table(
+        self, channel: ChannelNumber, from_index: RecordIndex, count: TableRecordCount, columns: list[ColumnLabel]
+    ) -> ArrowStream:
+        """
+        Get consecutive data records of the run a channel holds as one Arrow table, for bulk reads.
+
+        The records are those `GetData` returns, as an Arrow IPC stream with one record batch and one column per
+        quantity, named by its BDF preferred label (for example `Voltage / V`) in BDF units. Record index, cycle
+        count, step count and step ID are int64, all other quantities float64. A value the channel did not measure
+        is null, and a column that is null in every row is left out. Nothing is derived or validated: use
+        `ExportData` for a complete BDF file.
+
+        Args:
+          Channel: The channel number.
+          FromIndex: The record index of the first record to return.
+          Count: The most records to return.
+          Columns: The BDF labels of the columns to return; empty for every quantity.
+
+        Returns:
+          Table: The records from FromIndex on, fewer than Count at the end of the data.
+        """
+        return await self.backend.get_data_table(channel, from_index, count, list(columns))
 
     @sila.UnobservableCommand(errors=[DataRangeTooLargeError])
     async def get_data_in_time_range(

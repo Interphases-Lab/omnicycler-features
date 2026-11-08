@@ -650,16 +650,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aurora-unicycler" },
-    { name = "unitelabs-cdk" },
-]
-
-[package.optional-dependencies]
-bdf = [
     { name = "batterydf" },
-]
-testing = [
+    { name = "polars" },
+    { name = "pyarrow" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "unitelabs-cdk" },
 ]
 
 [package.dev-dependencies]
@@ -675,12 +671,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aurora-unicycler", specifier = "~=0.5.0" },
-    { name = "batterydf", marker = "extra == 'bdf'", git = "https://github.com/battery-data-alliance/battery-data-format?rev=354d2e5695530c806bd02801c5c179ea39a4fa70" },
-    { name = "pytest", marker = "extra == 'testing'", specifier = ">=9.2.0" },
-    { name = "pytest-asyncio", marker = "extra == 'testing'", specifier = ">=1.4.1.post1" },
+    { name = "batterydf", git = "https://github.com/battery-data-alliance/battery-data-format?rev=354d2e5695530c806bd02801c5c179ea39a4fa70" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
     { name = "unitelabs-cdk", specifier = "~=0.18.0" },
 ]
-provides-extras = ["bdf", "testing"]
 
 [package.metadata.requires-dev]
 dev = [
