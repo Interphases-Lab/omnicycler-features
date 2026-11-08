@@ -3,7 +3,7 @@ Typed async client for any OmniCycler server.
 
     async with OmniCyclerClient.connect(ClientConfig(hostname="localhost", port=50052, tls=False)) as cycler:
         channels = await cycler.information.get_channels()
-        await cycler.channels.start_protocol(1, protocol, Sample(name="cell-1", nominal_capacity=0.005))
+        run_id = await cycler.channels.start_protocol(1, protocol, Sample(name="cell-1", nominal_capacity=0.005))
 
 Brand repos extend it with their own feature clients by subclassing
 `OmniCyclerClient` and resolving their features in `__init__`.
@@ -16,7 +16,7 @@ import typing
 from sila.client import Client, ClientConfig
 
 from . import channel_controller, cycler_information_provider, measurement_provider
-from ._base import Execution, ms, require_feature
+from .base import Execution, ms, require_feature
 from .channel_controller import ChannelControllerClient
 from .cycler_information_provider import CyclerInformationProviderClient
 from .errors import (

@@ -34,6 +34,9 @@ CONTENT_TYPE = sila.constraints.ContentType("application", "json")
 PLACEHOLDER_SAMPLE_NAME = "$NAME"
 """Aurora-unicycler's placeholder for a sample name that has not been set."""
 
+REQUIRED_SAFETY_LIMITS = ("min_voltage_V", "max_voltage_V")
+"""The safety limits every protocol must set: a missing voltage limit would fall back to the cycler's range."""
+
 _CAPACITY_TOLERANCE = 1e-9
 """Capacities in mAh closer than this are the same."""
 
@@ -82,7 +85,8 @@ def parse_protocol(data: bytes, sample: Sample) -> ParsedProtocol:
 
     Raises:
       InvalidSampleError: If the sample name is aurora-unicycler's placeholder.
-      InvalidProtocolError: If the bytes are not a valid aurora-unicycler protocol.
+      InvalidProtocolError: If the bytes are not a valid aurora-unicycler protocol, or it sets no voltage
+        safety limits (`REQUIRED_SAFETY_LIMITS`).
     """
     if sample.name.strip() in {"", PLACEHOLDER_SAMPLE_NAME}:
         msg = f"Sample name {sample.name!r} is a placeholder; give the cell a real name."
@@ -108,6 +112,14 @@ def parse_protocol(data: bytes, sample: Sample) -> ParsedProtocol:
         except (pydantic.ValidationError, TypeError, ValueError) as error:
             msg = f"Protocol is not a valid aurora-unicycler protocol: {error}"
             raise InvalidProtocolError(msg) from None
+
+    missing = [name for name in REQUIRED_SAFETY_LIMITS if getattr(protocol.safety, name) is None]
+    if missing:
+        msg = (
+            f"Protocol sets no {' and no '.join(f'safety.{name}' for name in missing)}. OmniCycler requires voltage "
+            "safety limits, because a cycler's own limits are its hardware range, not the cell's."
+        )
+        raise InvalidProtocolError(msg)
 
     messages.extend(str(warning.message) for warning in caught if issubclass(warning.category, UserWarning))
     return ParsedProtocol(protocol=protocol, warnings=messages)
@@ -175,6 +187,7 @@ def _sample_replacement_warnings(block: object, sample: Sample) -> list[str]:
 __all__ = [
     "CONTENT_TYPE",
     "PLACEHOLDER_SAMPLE_NAME",
+    "REQUIRED_SAFETY_LIMITS",
     "ParsedProtocol",
     "encode_protocol",
     "parse_protocol",

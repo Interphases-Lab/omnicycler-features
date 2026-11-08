@@ -1,6 +1,7 @@
 import asyncio
 import collections.abc
 import contextlib
+import uuid
 
 from aurora_unicycler import CyclingProtocol
 from sila.client import FeatureNamespace
@@ -12,14 +13,22 @@ from ..errors import (
     ChannelUnavailableError,
     NoActiveProtocolError,
     NoRunError,
+    RunIdInUseError,
+    RunMismatchError,
 )
 from ..protocol import encode_protocol
 from ..types import ChannelState, ChannelStatus, RunInformation, Sample
-from ._base import ErrorMap, error_map, from_wire, list_from_wire, ms, response, to_wire, translate_errors
+from .base import ErrorMap, error_map, from_wire, list_from_wire, ms, response, to_wire, translate_errors
 
 FEATURE = f"{ORIGINATOR}/{CATEGORY}/ChannelController/v1"
 ERRORS: ErrorMap = error_map(
-    ChannelBusyError, ChannelNotClearedError, ChannelUnavailableError, NoActiveProtocolError, NoRunError
+    ChannelBusyError,
+    ChannelNotClearedError,
+    ChannelUnavailableError,
+    NoActiveProtocolError,
+    NoRunError,
+    RunIdInUseError,
+    RunMismatchError,
 )
 
 
@@ -64,27 +73,43 @@ class ChannelControllerClient:
         return from_wire(RunInformation, response(responses, "RunInformation"))
 
     async def start_protocol(
-        self, channel: int, protocol: CyclingProtocol | bytes, sample: Sample, *, timeout: float | None = None
-    ) -> None:
+        self,
+        channel: int,
+        protocol: CyclingProtocol | bytes,
+        sample: Sample,
+        *,
+        run_id: str | None = None,
+        timeout: float | None = None,
+    ) -> str:
         """
-        Start a protocol on an idle channel.
+        Start a protocol on an idle channel, as a new run.
+
+        If the outcome is unknown (`CommandOutcomeUnknownError`), call again with the same `run_id`: a start of
+        a run the channel already holds succeeds without effect.
 
         Args:
           channel: The channel number.
           protocol: An aurora-unicycler protocol, or its UTF-8 encoded JSON.
           sample: The cell under test; replaces the protocol's own sample block.
+          run_id: The new run's identifier; a fresh UUID if omitted.
           timeout: The longest to wait for the server, in seconds.
+
+        Returns:
+          The run's identifier.
 
         Raises:
           InvalidParameterError: If the protocol or sample is rejected; `parameter` names which.
-          ChannelBusyError: If the channel is running or paused a protocol.
-          ChannelNotClearedError: If the channel holds an ended run.
+          ChannelBusyError: If the channel is running or paused another run.
+          ChannelNotClearedError: If the channel holds another, ended run.
           ChannelUnavailableError: If the channel is unavailable.
+          RunIdInUseError: If another channel holds a run with this identifier.
         """
+        run_id = run_id or str(uuid.uuid4())
         with translate_errors(ERRORS):
             await self._ns.StartProtocol(
-                Channel=channel, Protocol=_encode(protocol), Sample=to_wire(sample), timeout=ms(timeout)
+                Channel=channel, RunId=run_id, Protocol=_encode(protocol), Sample=to_wire(sample), timeout=ms(timeout)
             )
+        return run_id
 
     async def validate_protocol(
         self, channel: int, protocol: CyclingProtocol | bytes, sample: Sample, *, timeout: float | None = None
@@ -104,41 +129,51 @@ class ChannelControllerClient:
             )
         return list_from_wire(str, response(responses, "Warnings"))
 
-    async def stop_protocol(self, channel: int, *, timeout: float | None = None) -> None:
-        """Stop the protocol of a channel. Succeeds without effect if none is running or paused."""
-        with translate_errors(ERRORS):
-            await self._ns.StopProtocol(Channel=channel, timeout=ms(timeout))
-
-    async def pause_protocol(self, channel: int, *, timeout: float | None = None) -> None:
+    async def stop_protocol(self, channel: int, run_id: str, *, timeout: float | None = None) -> None:
         """
-        Pause the running protocol of a channel. Succeeds without effect if already paused.
+        Stop the protocol of a run. Succeeds without effect if it is not running or paused, or the channel holds no run.
 
         Raises:
+          RunMismatchError: If the channel holds another run.
+        """
+        with translate_errors(ERRORS):
+            await self._ns.StopProtocol(Channel=channel, RunId=run_id, timeout=ms(timeout))
+
+    async def pause_protocol(self, channel: int, run_id: str, *, timeout: float | None = None) -> None:
+        """
+        Pause the running protocol of a run. Succeeds without effect if already paused.
+
+        Raises:
+          RunMismatchError: If the channel holds another run.
           NoActiveProtocolError: If the channel has no running or paused protocol.
         """
         with translate_errors(ERRORS):
-            await self._ns.PauseProtocol(Channel=channel, timeout=ms(timeout))
+            await self._ns.PauseProtocol(Channel=channel, RunId=run_id, timeout=ms(timeout))
 
-    async def resume_protocol(self, channel: int, *, timeout: float | None = None) -> None:
+    async def resume_protocol(self, channel: int, run_id: str, *, timeout: float | None = None) -> None:
         """
-        Resume the paused protocol of a channel. Succeeds without effect if already running.
+        Resume the paused protocol of a run. Succeeds without effect if already running.
 
         Raises:
+          RunMismatchError: If the channel holds another run.
           NoActiveProtocolError: If the channel has no running or paused protocol.
         """
         with translate_errors(ERRORS):
-            await self._ns.ResumeProtocol(Channel=channel, timeout=ms(timeout))
+            await self._ns.ResumeProtocol(Channel=channel, RunId=run_id, timeout=ms(timeout))
 
-    async def clear_channel(self, channel: int, *, timeout: float | None = None) -> None:
+    async def clear_channel(self, channel: int, run_id: str, *, timeout: float | None = None) -> None:
         """
-        Release the ended run of a channel. Retrieve its data first: afterwards the server no longer serves it.
+        Delete an ended run with all its data, so the channel is idle. Export the data first: it is gone for good.
+
+        Succeeds without effect if the channel holds no run.
 
         Raises:
-          ChannelBusyError: If the channel is running or paused a protocol.
+          RunMismatchError: If the channel holds another run.
+          ChannelBusyError: If the run is running or paused.
           ChannelUnavailableError: If the channel is unavailable.
         """
         with translate_errors(ERRORS):
-            await self._ns.ClearChannel(Channel=channel, timeout=ms(timeout))
+            await self._ns.ClearChannel(Channel=channel, RunId=run_id, timeout=ms(timeout))
 
     async def wait_for_state(
         self, channel: int, states: collections.abc.Collection[ChannelState], *, timeout: float

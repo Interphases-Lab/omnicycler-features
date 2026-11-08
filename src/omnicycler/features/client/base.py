@@ -4,6 +4,10 @@ Connection and conversion helpers of the typed client.
 All access to the dynamically typed `sila.client` API is confined to this
 module and the per-feature client modules. Public client methods only ever
 accept and return the shared wire types.
+
+This module is public: brand repos build the clients of their brand features
+on it, so every OmniCycler client decodes the wire and translates errors the
+same way.
 """
 
 import collections.abc

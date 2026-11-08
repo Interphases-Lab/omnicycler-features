@@ -51,7 +51,26 @@ class NoRunError(Exception):
     """
     The channel holds no run.
 
-    Start a protocol with `ChannelController.StartProtocol` first.
+    The run was cleared, or none was started. Start a protocol with
+    `ChannelController.StartProtocol` first.
+    """
+
+
+class RunMismatchError(Exception):
+    """
+    The channel holds a different run than the one named.
+
+    The run you meant has ended and been cleared, and another run now holds
+    the channel. Read `ChannelStatus.RunId` and act on that run only if you
+    mean to.
+    """
+
+
+class RunIdInUseError(Exception):
+    """
+    Another channel already holds a run with this RunId.
+
+    Give every run its own identifier, for example a fresh UUID.
     """
 
 
@@ -85,5 +104,7 @@ __all__ = [
     "InvalidSampleError",
     "NoActiveProtocolError",
     "NoRunError",
+    "RunIdInUseError",
+    "RunMismatchError",
     "UnsupportedProtocolError",
 ]

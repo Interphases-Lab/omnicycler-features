@@ -27,7 +27,7 @@ from omnicycler.features.client import (
     cycler_information_provider,
     measurement_provider,
 )
-from omnicycler.features.client._base import pascal, wire_name
+from omnicycler.features.client.base import pascal, wire_name
 from omnicycler.features.cycler_information_provider import CyclerInformationProvider
 from omnicycler.features.measurement_provider import MeasurementProvider
 

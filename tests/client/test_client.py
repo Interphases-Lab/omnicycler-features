@@ -17,7 +17,7 @@ from omnicycler.features.client import (
     OmniCyclerClient,
     ProtocolMismatchError,
 )
-from omnicycler.features.client._base import from_wire, list_from_wire, to_wire
+from omnicycler.features.client.base import from_wire, list_from_wire, to_wire
 from omnicycler.features.client.measurement_provider import PAGE_SIZE
 from omnicycler.features.cycler_information_provider import CyclerInformationProvider
 from omnicycler.features.errors import ChannelBusyError
@@ -56,19 +56,20 @@ async def test_public_api_is_fully_typed(cycler: OmniCyclerClient, channel: Chan
     typing.assert_type(await cycler.information.get_channels(), list[ChannelInformation])
     typing.assert_type(await cycler.information.get_supported_step_types(), list[StepType])
     typing.assert_type(await cycler.channels.validate_protocol(number, short_protocol(), sample), list[str])
-    typing.assert_type(await cycler.channels.start_protocol(number, short_protocol(), sample), None)
+    run_id = await cycler.channels.start_protocol(number, short_protocol(), sample)
+    typing.assert_type(run_id, str)
     status = await cycler.channels.wait_for_state(number, ENDED, timeout=30)
     typing.assert_type(status, ChannelStatus)
     typing.assert_type(await cycler.channels.get_channel_status(number), ChannelStatus)
     typing.assert_type(await cycler.channels.get_run_information(number), RunInformation)
-    typing.assert_type(await cycler.measurements.get_record_count(number), int)
-    typing.assert_type(await cycler.measurements.get_data(number, 0, 10), list[DataPoint])
-    typing.assert_type(await cycler.measurements.get_data_in_time_range(number, 0, 10), list[DataPoint])
-    typing.assert_type(await cycler.measurements.monitor_channel(number, 0, 1), MonitorResult)
-    typing.assert_type(await cycler.measurements.export_data(number, BdfFormat.CSV), BdfExport)
+    typing.assert_type(await cycler.measurements.get_record_count(number, run_id), int)
+    typing.assert_type(await cycler.measurements.get_data(number, run_id, 0, 10), list[DataPoint])
+    typing.assert_type(await cycler.measurements.get_data_in_time_range(number, run_id, 0, 10), list[DataPoint])
+    typing.assert_type(await cycler.measurements.monitor_channel(number, run_id, 0, 1), MonitorResult)
+    typing.assert_type(await cycler.measurements.export_data(number, run_id, BdfFormat.CSV), BdfExport)
     async with cycler.channels.subscribe_channel_statuses() as statuses:
         typing.assert_type(await anext(statuses), list[ChannelStatus])
-    async with cycler.measurements.monitor(number) as records:
+    async with cycler.measurements.monitor(number, run_id) as records:
         typing.assert_type(await anext(records), DataPoint)
 
 
@@ -89,15 +90,15 @@ async def test_server_errors_arrive_as_shared_classes(cycler: OmniCyclerClient, 
         await cycler.channels.validate_protocol(channel.channel, b"{}", sample_for(channel))
     assert error.value.parameter == "Protocol"
     with pytest.raises(InvalidParameterError) as error:
-        await cycler.measurements.get_data_in_time_range(channel.channel, 10, 5)
+        await cycler.measurements.get_data_in_time_range(channel.channel, "run", 10, 5)
     assert error.value.parameter == "ToTestTime"
 
 
 async def test_unmeasured_values_arrive_as_nan(cycler: OmniCyclerClient, channel: ChannelInformation):
-    await cycler.channels.start_protocol(channel.channel, short_protocol(), sample_for(channel))
+    run_id = await cycler.channels.start_protocol(channel.channel, short_protocol(), sample_for(channel))
     await cycler.channels.wait_for_state(channel.channel, ENDED, timeout=30)
 
-    point = (await cycler.measurements.get_data(channel.channel, 0, 1))[0]
+    point = (await cycler.measurements.get_data(channel.channel, run_id, 0, 1))[0]
 
     assert math.isnan(point.temperature_t2)
     assert point.ambient_temperature == 25.0
@@ -106,14 +107,15 @@ async def test_unmeasured_values_arrive_as_nan(cycler: OmniCyclerClient, channel
 async def test_run_id_and_fault_reason_cross_the_wire(cycler: OmniCyclerClient, channel: ChannelInformation):
     method = [{"step": "constant_current", "rate_C": 1, "until_time_s": 3600}]
     protocol = make_protocol(method, capacity=sample_for(channel).nominal_capacity, safety={"max_voltage_V": 3.8})
-    await cycler.channels.start_protocol(channel.channel, protocol, sample_for(channel))
+    run_id = await cycler.channels.start_protocol(channel.channel, protocol, sample_for(channel), run_id="my-run")
 
     status = await cycler.channels.wait_for_state(channel.channel, ENDED, timeout=30)
 
     assert status.state is ChannelState.FAULTED
+    assert status.run_id == run_id == "my-run"
     assert "maximal voltage" in status.fault_reason
-    run_id = (await cycler.channels.get_run_information(channel.channel)).run_id
-    export = await cycler.measurements.export_data(channel.channel, BdfFormat.PARQUET)
+    assert (await cycler.channels.get_run_information(channel.channel)).run_id == run_id
+    export = await cycler.measurements.export_data(channel.channel, run_id, BdfFormat.PARQUET)
     test = json.loads(export.metadata)["battinfo_test"]["test"]
     assert test["identifier"] == run_id
     assert test["conformance"]["deviations"][0]["description"] == status.fault_reason
@@ -139,14 +141,14 @@ async def test_monitor_fills_gaps_from_get_data():
     stored = [_point(index) for index in range(10)]
 
     class Recorder(MeasurementProviderClient):
-        async def get_data(self, channel, from_index, count, *, timeout=None):  # noqa: ARG002
+        async def get_data(self, channel, run_id, from_index, count, *, timeout=None):  # noqa: ARG002
             return stored[from_index : from_index + count]
 
     client = Recorder(typing.cast("typing.Any", None))
 
-    assert [p.record_index for p in await client._fill(1, 2, stored[5:7])] == [2, 3, 4, 5, 6]
-    assert [p.record_index for p in await client._fill(1, 6, stored[4:8])] == [6, 7]
-    assert await client._fill(1, 9, stored[0:3]) == []
+    assert [p.record_index for p in await client._fill(1, "run", 2, stored[5:7])] == [2, 3, 4, 5, 6]
+    assert [p.record_index for p in await client._fill(1, "run", 6, stored[4:8])] == [6, 7]
+    assert await client._fill(1, "run", 9, stored[0:3]) == []
 
 
 async def test_monitor_fills_gaps_longer_than_a_page():
@@ -154,19 +156,23 @@ async def test_monitor_fills_gaps_longer_than_a_page():
     requests = []
 
     class Recorder(MeasurementProviderClient):
-        async def get_data(self, channel, from_index, count, *, timeout=None):  # noqa: ARG002
+        async def get_data(self, channel, run_id, from_index, count, *, timeout=None):  # noqa: ARG002
             requests.append((from_index, count))
             return stored[from_index : from_index + count]
 
     client = Recorder(typing.cast("typing.Any", None))
 
-    filled = await client._fill(1, 3, stored[2 * PAGE_SIZE + 5 :])
+    filled = await client._fill(1, "run", 3, stored[2 * PAGE_SIZE + 5 :])
     assert [p.record_index for p in filled] == list(range(3, 2 * PAGE_SIZE + 10))
     assert all(count <= PAGE_SIZE for _, count in requests)
 
 
 def test_to_wire_uses_identifiers_and_enum_strings():
-    assert to_wire(Sample(name="cell", nominal_capacity=1.5)) == {"Name": "cell", "NominalCapacity": 1.5}
+    assert to_wire(Sample(name="cell", nominal_capacity=1.5)) == {
+        "Name": "cell",
+        "NominalCapacity": 1.5,
+        "Identifier": "",
+    }
     assert to_wire([BdfFormat.CSV, BdfFormat.PARQUET]) == ["csv", "parquet"]
 
 
@@ -174,6 +180,7 @@ def test_from_wire_checks_the_shape():
     status = {
         "Channel": 1,
         "State": "running",
+        "RunId": "run",
         "Voltage": 3.7,
         "Current": 0,
         "TestTime": 1,
